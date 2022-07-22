@@ -243,29 +243,13 @@ print("Computing completed!")
 print()
 
 """ 
-PLOT PARAMETERS 
+PARAMETERS FOR PLOTTING
 """ 
 x_idxs = np.linspace(0, T-1, num=T)
 x_labels = pre_cols + post_cols
 y_pre = df_pre.loc[df_pre['unit']==treated_unit, pre_cols].values.flatten() 
 y_post = df_post.loc[df_post['unit']==treated_unit, post_cols].values.flatten() 
 y_obs = np.concatenate([y_pre, y_post])
-
-# store out-of-sample residuals
-for alg in ci_algs: 
-    y_alg = est_dict[alg]['hz']
-    err = y_post - y_alg 
-    res_dict[alg]['hz'][-1, :] = err 
-    res_dict[alg]['vt'][T0:] = err
-
-# find largest error value for plotting
-y_lim = 0  
-for alg in ci_algs: 
-	y_lim_hz = np.abs(res_dict[alg]['hz'][-1]).max() 
-	y_lim_vt = np.abs(res_dict[alg]['vt'][T0:]).max() 
-	y_lim_alg = np.max([y_lim_hz, y_lim_vt])
-	y_lim = y_lim_alg if y_lim_alg>y_lim else y_lim 
-y_lim = int(np.round(y_lim))+5
 
 # colors 
 colors = {
@@ -281,6 +265,13 @@ box_colors = {
 	'ols': palette[1], 
 	'pcr': palette[2]
 }
+
+if data=='germany':
+    data_title = 'West Germany Reunification'
+elif data=='basque':
+    data_title = 'Terrorism in Basque Country'
+else:
+    data_title = 'CA Proposition 99'
 
 """ 
 PLOT ESTIMATION RESULTS 
@@ -325,55 +316,81 @@ plt.close()
 
 """ 
 PLOT RESIDUALS
-"""  
-print("Plotting residuals...")
-# VT residuals
+"""
+# store out-of-sample residuals
 for alg in ci_algs: 
-	fname = os.path.join(output_dir, "{}_vt_residuals".format(alg))
-	(fig, ax) = plt.subplots(dpi=100)
-	plt.axvline(x=T0, linestyle=':', color='gray', label=iv)
-	plt.axhline(y=0, color='black')
-	plt.plot(res_dict[alg]['vt'], '*', color=colors[alg])
-	plt.xticks(x_idxs[::interval], x_labels[::interval])
-	plt.legend(loc='best')
-	plt.xlabel('year')
-	plt.ylabel('gap in {} in {}'.format(outcome_var, treated_unit))
-	plt.title('vt-{}'.format(alg))
-	plt.ylim([-y_lim, y_lim])
-	bbox_props = dict(boxstyle="larrow", fc=box_colors[alg], ec=colors[alg], lw=1)
-	t = ax.text(T0-1, y_lim//2, "in-sample errors", ha="right", va="center", bbox=bbox_props)
-	n_xticks = len(ax.get_xticklabels())
-	x_idx = int(np.round(T0/T * n_xticks))
-	for j in range(x_idx, n_xticks): 
-		plt.gca().get_xticklabels()[j].set_color("red")
-	plt.savefig(fname, dpi=100, bbox_inches="tight")
-	plt.close()
+	y_alg = est_dict[alg]['hz']
+	err = y_post - y_alg 
+	res_dict[alg]['hz'][-1, :] = err 
+	res_dict[alg]['vt'][T0:] = err
+
+# find largest error value for plotting
+y_lim = 0  
+for alg in ci_algs: 
+	y_lim_hz = np.abs(res_dict[alg]['hz'][-1]).max() 
+	y_lim_vt = np.abs(res_dict[alg]['vt'][T0:]).max() 
+	y_lim_alg = np.max([y_lim_hz, y_lim_vt])
+	y_lim = y_lim_alg if y_lim_alg>y_lim else y_lim 
+y_lim = int(np.round(y_lim)) * 1.01
+
+# VT residuals
+fname = os.path.join(output_dir, "vt_residuals_in_out")
+res_dict[alg]['vt'][np.abs(res_dict[alg]['vt'])<=1e-10] = 0
+(fig, ax) = plt.subplots(dpi=100)
+plt.axvline(x=T0, linestyle=':', color='gray', label=iv)
+plt.axhline(y=0, color='black')
+for alg in ci_algs: 
+	plt.plot(res_dict[alg]['vt'], '*', color=colors[alg], label='vt-{}'.format(alg))
+plt.xticks(x_idxs[::3], x_labels[::3])
+plt.xticks(rotation=90)
+plt.legend(loc='best')
+plt.xlabel('year')
+plt.ylabel('gap in {} in {}'.format(outcome_var, treated_unit))
+plt.title(data_title)
+plt.ylim([-y_lim, y_lim])
+bbox_props = dict(boxstyle="larrow", fc=box_colors[alg], ec=colors[alg], lw=1)
+t = ax.text(T0-1, y_lim//2, "in-sample errors", ha="right", va="center", bbox=bbox_props)
+n_xticks = len(ax.get_xticklabels())
+x_idx = int(np.round(T0/T * n_xticks))
+for j in range(x_idx, n_xticks): 
+	plt.gca().get_xticklabels()[j].set_color("red")
+plt.savefig(fname, dpi=100, bbox_inches="tight")
+plt.close()
 
 # HZ residuals
-df_res = pd.DataFrame(columns=['unit', 'error'])
 units = list(donors) + [treated_unit]
+x_unit_idxs = np.linspace(0, N-1, num=N)
+x_unit_labels = [unit[:4] + '.' for unit in units]
+df_res = pd.DataFrame(columns=['alg', 'unit', 'error'])
+
+fname = os.path.join(output_dir, "hz_residuals_in_out") 
+(fig, ax) = plt.subplots(dpi=100)
+plt.axhline(y=0, color='black')
 for alg in ci_algs:
-	fname = os.path.join(output_dir, "{}_hz_residuals".format(alg)) 
-	hz_res = res_dict[alg]['hz']
-	# store as dataframe for sns plotting 
+	hz_res = res_dict[alg]['hz'] 
 	for (i, unit) in enumerate(units):  
-		series = pd.DataFrame({'unit': [unit]*T1,
+		series = pd.DataFrame({'alg': ['hz-{}'.format(alg)] * T1,
+							   'unit': [unit]*T1,
 							   'error': hz_res[i]})
 		df_res = pd.concat([df_res, series])
-	(fig, ax) = plt.subplots(dpi=100)
-	plt.axhline(y=0, color='black')
-	ax = sns.swarmplot(x='unit', y='error', data=df_res, marker='*', color=colors[alg])
-	plt.xticks(rotation=90)
-	plt.gca().get_xticklabels()[-1].set_color("red")
-	plt.ylabel('gap in {} from {}-{}'.format(outcome_var, post_cols[0], post_cols[-1]))
-	plt.xlabel('units')
-	plt.title('hz-{}'.format(alg))
-	plt.axvline(x=N-1.5, linestyle=':', color='gray')
-	ax.set(ylim=(-y_lim, y_lim))
-	bbox_props = dict(boxstyle="larrow", fc=box_colors[alg], ec=colors[alg], lw=1)
-	t = ax.text(N-2, y_lim//2, "in-sample errors", ha="right", va="center", bbox=bbox_props)
-	plt.savefig(fname, dpi=100, bbox_inches="tight")
-	plt.close() 
+
+# swarmplot from dataframe of residuals
+for alg in ci_algs:
+	ax = sns.swarmplot(x='unit', y='error', data=df_res.loc[df_res['alg']=='hz-{}'.format(alg)], 
+					   marker='*', hue='alg', palette=[colors[alg]])
+plt.legend(loc='best')
+plt.xticks(rotation=90)
+plt.xticks(x_unit_idxs, x_unit_labels)
+plt.gca().get_xticklabels()[-1].set_color("red")
+plt.ylabel('gap in {} from {}-{}'.format(outcome_var, post_cols[0], post_cols[-1]))
+plt.xlabel('units')
+plt.title(data_title)
+plt.axvline(x=N-1.5, linestyle=':', color='gray')
+ax.set(ylim=(-y_lim, y_lim))
+bbox_props = dict(boxstyle="larrow", fc=box_colors[alg], ec=colors[alg], lw=1)
+t = ax.text(N-2, y_lim//2, "in-sample errors", ha="right", va="center", bbox=bbox_props)
+plt.savefig(fname, dpi=100, bbox_inches="tight")
+plt.close() 
 
 """ 
 PLOT CONFIDENCE INTERVALS
