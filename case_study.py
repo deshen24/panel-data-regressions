@@ -7,7 +7,7 @@ import seaborn as sns
 from sklearn.linear_model import LinearRegression, Ridge, Lasso, ElasticNet 
 from regr import cvx_regr, pcr 
 from var import var_est
-from rank import svt
+from rank import svt, spectral_rank
 
 warnings.filterwarnings("ignore")
 
@@ -21,18 +21,17 @@ print("---------------------")
 
 # data info 
 info = {'prop99': {'treated_unit': 'California', 
-				   'ymin': 0, 'ymax': 140, 'k': 4, 
+				   'ymin': 0, 'ymax': 140,
 				   'outcome_var': 'cigarette sales', 'iv': 'Prop 99', 'interval': 5},
 		'basque': {'treated_unit': 'Basque', 
-				   'ymin': 0, 'ymax': 14, 'k': 2, 
+				   'ymin': 0, 'ymax': 14, 
 				   'outcome_var': 'gdp', 'iv': 'terrorism', 'interval': 10},
 		'germany': {'treated_unit': 'West Germany', 
-					'ymin': 0, 'ymax': 36000, 'k': 4,
+					'ymin': 0, 'ymax': 36000, 
 				    'outcome_var': 'gdp', 'iv': 'reunification', 'interval': 10}
 		}
 treated_unit = info[data]['treated_unit']
 (ymin, ymax) = (info[data]['ymin'], info[data]['ymax'])
-k = info[data]['k']
 (outcome_var, iv, interval) = (info[data]['outcome_var'], info[data]['iv'], info[data]['interval'])
 output_dir = 'output/case_study/{}'.format(data) 
 os.makedirs(output_dir, exist_ok=True)
@@ -62,14 +61,15 @@ print("data configuration: ({}, {})".format(N0, T0))
 """ 
 Estimation 
 """ 
-directions = ['hz', 'vt', 'mixed']
-sym_class = ['ols', 'pcr', 'ridge']
-asym_class = ['lasso', 'simplex', 'elastic net']
-ci_algs = ['ols', 'pcr'] 
-algs = sym_class + asym_class
+directions = ['hz', 'vt', 'dr'] # sources of randomness 
+sym_class = ['ols', 'pcr', 'ridge'] # symmetric class estimators 
+asym_class = ['lasso', 'simplex', 'elastic net'] # asymmetric class estimators 
+ci_algs = ['ols', 'pcr'] # symmetric estimators with valid confidence intervals
+algs = sym_class + asym_class 
 
 # parameters
-z = 1.96 
+z = 1.96 # 95% confidence interval parameter 
+t = 0.999 # retain 99.9% of spectral energy  
 fit_intercept = False 
 
 # pre-computations  
@@ -81,8 +81,9 @@ alg_data_dict = {alg: {'Y0': np.zeros((N0, T0)),
 y_n = df_pre.loc[df_pre['unit']==treated_unit].drop(columns=['unit']).values.flatten()
 Y0 = df_pre.loc[df_pre['unit'].isin(donors)].drop(columns=['unit']).values 
 for alg in ci_algs: 
-	max_rank = k if alg=='pcr' else min(N0, T0)
-	(Y0_alg, Hu_alg, Hv_alg, Hu_perp_alg, Hv_perp_alg) = svt(Y0, max_rank=max_rank)
+	(u, s, v) = np.linalg.svd(Y0, full_matrices=False)
+	k = spectral_rank(s, t=t) if alg=='pcr' else min(N0, T0)
+	(Y0_alg, Hu_alg, Hv_alg, Hu_perp_alg, Hv_perp_alg) = svt(Y0, max_rank=k)
 	alg_data_dict[alg]['Y0'] = Y0_alg 
 	alg_data_dict[alg]['Hu'] = Hu_alg 
 	alg_data_dict[alg]['Hv'] = Hv_alg 
@@ -105,7 +106,7 @@ for alg in ci_algs:
 	if hrk_count==2: 
 		var_algs[alg].append('HRK')
 
-# plot spectra
+# plot spectra of singular values 
 (_, s, _) = np.linalg.svd(Y0, full_matrices=False)
 fname = os.path.join(output_dir, 'spectra_{}'.format(data))
 x_idxs = np.linspace(0, len(s)-1, num=len(s))
@@ -132,11 +133,11 @@ res_dict = {alg: {d: np.zeros(T) if d=='vt' else np.zeros((N, T1))
 			for alg in ci_algs}
 se_dict = {alg: {v_alg: {d: np.zeros(T1) for d in directions} for v_alg in var_algs[alg]} for alg in ci_algs}
 
-# iterate through post-iv period 
+# iterate through post-treatment period 
 print("Computing...")
 for (t, post_t) in enumerate(post_cols): 
 
-	# get post-iv outcome data 
+	# get post-treatment outcome data 
 	y_t = df_post.loc[df_post['unit'].isin(donors), post_t].values.flatten()
 
 	# ols 
@@ -158,10 +159,10 @@ for (t, post_t) in enumerate(post_cols):
 											alg_data_dict['ols']['Hu_perp'], 
 											alg_data_dict['ols']['Hv_perp'], 
 										  	v_alg=v_alg)
-			var_mixed = max(0, var_hz + var_vt - trA)
+			var_dr = max(0, var_hz + var_vt - trA)
 			se_dict['ols'][v_alg]['hz'][t] = z * np.sqrt(var_hz)
 			se_dict['ols'][v_alg]['vt'][t] = z * np.sqrt(var_vt) 
-			se_dict['ols'][v_alg]['mixed'][t] = z * np.sqrt(var_mixed)
+			se_dict['ols'][v_alg]['dr'][t] = z * np.sqrt(var_dr)
 
 		# store in-sample residuals
 		res_dict['ols']['hz'][:-1, t] = alg_data_dict['ols']['Hu_perp'] @ y_t
@@ -184,10 +185,10 @@ for (t, post_t) in enumerate(post_cols):
 											alg_data_dict['pcr']['Hu_perp'], 
 											alg_data_dict['pcr']['Hv_perp'], 
 										  	v_alg=v_alg)
-			var_mixed = max(0, var_hz + var_vt - trA)
+			var_dr = max(0, var_hz + var_vt - trA)
 			se_dict['pcr'][v_alg]['hz'][t] = z * np.sqrt(var_hz)
 			se_dict['pcr'][v_alg]['vt'][t] = z * np.sqrt(var_vt) 
-			se_dict['pcr'][v_alg]['mixed'][t]= z * np.sqrt(var_mixed)
+			se_dict['pcr'][v_alg]['dr'][t]= z * np.sqrt(var_dr)
 
 		# store in-sample residuals
 		res_dict['pcr']['hz'][:-1, t] = alg_data_dict['pcr']['Hu_perp'] @ y_t
@@ -282,8 +283,8 @@ fname = os.path.join(output_dir, "symmetric")
 for alg in sym_class: 
 	y_hz = est_dict[alg]['hz']
 	y_vt = est_dict[alg]['vt']
-	plt.plot(np.concatenate([y_pre, y_hz]), color=colors[alg], label='hz-{}'.format(alg))
-	plt.plot(np.concatenate([y_pre, y_vt]), color=colors[alg], linestyle='-.', label='vt-{}'.format(alg))
+	plt.plot(np.concatenate([y_pre, y_hz]), color=colors[alg], label='{}'.format(alg))
+	plt.plot(np.concatenate([y_pre, y_vt]), color=colors[alg], linestyle='-.')
 plt.plot(y_obs, color='black', lw=2.5, label='observed')
 plt.axvline(x=T0, linestyle=':', color='gray', label=iv)
 plt.xticks(x_idxs[::interval], x_labels[::interval])
