@@ -109,6 +109,3 @@ def var_est(y_n, y_t, Y0, w_hz, w_vt, Hu_perp, Hv_perp, v_alg):
 	elif v_alg=='HRK': 
 		(var_hz, var_vt, trA) = var_hrk(y_n, y_t, Y0, w_hz, w_vt, Hu_perp, Hv_perp)
 	return (var_hz, var_vt, trA)
-
-
-	
